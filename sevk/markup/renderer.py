@@ -5,8 +5,9 @@ Converts Sevk markup to email-compatible HTML using regex-based parsing (like No
 
 import re
 import html
+import json
 import math
-from typing import Dict, List, Tuple, Optional, Callable
+from typing import Dict, List, Tuple, Optional, Callable, Any
 
 
 class FontConfig:
@@ -24,6 +25,8 @@ class EmailHeadSettings:
         self.preview_text: str = ""
         self.styles: str = ""
         self.fonts: List[FontConfig] = []
+        self.lang: str = ""
+        self.dir: str = ""
 
 
 class ParsedEmailContent:
@@ -35,35 +38,65 @@ class ParsedEmailContent:
 
 def generate_email_from_markup(html_content: str, head_settings: Optional[EmailHeadSettings] = None) -> str:
     """Generate email HTML from Sevk markup"""
-    if head_settings is not None:
-        content_to_process = html_content
-        settings = head_settings
-    else:
-        parsed = parse_email_html(html_content)
-        content_to_process = parsed.body
-        settings = parsed.head_settings
+    # Always parse to extract clean body content (strips <mail>/<head> wrapper tags)
+    parsed = parse_email_html(html_content)
+    if head_settings is None:
+        head_settings = parsed.head_settings
+    content_to_process = parsed.body
+    settings = head_settings
 
     normalized = _normalize_markup(content_to_process)
-    processed = _process_markup(normalized)
+    body, gap_styles = _process_markup(normalized)
 
     # Build head content
     title_tag = f"<title>{settings.title}</title>" if settings.title else ""
     font_links = _generate_font_links(settings.fonts)
+    gap_style_tag = f'<style type="text/css">{gap_styles}</style>' if gap_styles else ""
     custom_styles = f'<style type="text/css">{settings.styles}</style>' if settings.styles else ""
     preview_text = f'<div style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">{settings.preview_text}</div>' if settings.preview_text else ""
 
+    lang = settings.lang or 'en'
+    dir_attr = settings.dir or 'ltr'
+
     return f'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html lang="en" dir="ltr">
+<html lang="{lang}" dir="{dir_attr}" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
 <meta content="text/html; charset=UTF-8" http-equiv="Content-Type"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="x-apple-disable-message-reformatting"/>
+<meta content="IE=edge" http-equiv="X-UA-Compatible"/>
+<meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no"/>
+<!--[if mso]>
+<noscript>
+<xml>
+<o:OfficeDocumentSettings>
+<o:AllowPNG/>
+<o:PixelsPerInch>96</o:PixelsPerInch>
+</o:OfficeDocumentSettings>
+</xml>
+</noscript>
+<![endif]-->
+<style type="text/css">
+#outlook a {{ padding: 0; }}
+body {{ margin: 0; padding: 0; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }}
+table, td {{ border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }}
+.sevk-row-table {{ border-collapse: separate !important; }}
+img {{ border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }}
+@media only screen and (max-width: 479px) {{
+  .sevk-row-table {{ width: 100% !important; }}
+  .sevk-column {{ display: block !important; width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }}
+}}
+</style>
+{gap_style_tag}
 {title_tag}
 {font_links}
 {custom_styles}
 </head>
-<body style="margin:0;padding:0;font-family:ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;background-color:#ffffff">
+<body style="margin:0;padding:0;word-spacing:normal;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">
+<div aria-roledescription="email" role="article">
 {preview_text}
-{processed}
+{body}
+</div>
 </body>
 </html>'''
 
@@ -101,6 +134,17 @@ def parse_email_html(content: str) -> ParsedEmailContent:
 def _parse_sevk_markup(content: str) -> ParsedEmailContent:
     """Parse Sevk markup format"""
     head_settings = EmailHeadSettings()
+
+    # Extract lang and dir from root <mail> or <email> tag
+    root_match = re.search(r'<(?:email|mail)([^>]*)>', content, re.IGNORECASE)
+    if root_match:
+        root_attrs = root_match.group(1)
+        lang_match = re.search(r'lang=["\']([^"\']*)["\']', root_attrs)
+        if lang_match:
+            head_settings.lang = lang_match.group(1)
+        dir_match = re.search(r'dir=["\']([^"\']*)["\']', root_attrs)
+        if dir_match:
+            head_settings.dir = dir_match.group(1)
 
     # Extract title
     title_match = re.search(r'<title[^>]*>([\s\S]*?)</title>', content, re.IGNORECASE)
@@ -152,52 +196,113 @@ def _parse_sevk_markup(content: str) -> ParsedEmailContent:
     return result
 
 
-def _process_markup(content: str) -> str:
-    """Process markup using regex-based parsing (like Node.js)"""
+def _process_markup(content: str) -> Tuple[str, str]:
+    """Process markup using regex-based parsing (like Node.js). Returns (html, gap_styles)."""
     result = content
 
+    # Ensure <link> tags are converted to <sevk-link> for processing
+    result = re.sub(r'<link\s+href=', '<sevk-link href=', result, flags=re.IGNORECASE)
+    result = result.replace('</link>', '</sevk-link>')
+
+    # Process block tags FIRST - expand blocks into sevk markup before other processing
+    result = _process_tag(result, 'block', _process_block_tag)
+    # Also handle self-closing <block ... /> tags
+    def _replace_self_closing_block(match):
+        attrs = _parse_attributes(match.group(1) or '')
+        return _process_block_tag(attrs, '')
+    result = re.sub(r'<block([^>]*)/\s*>', _replace_self_closing_block, result, flags=re.IGNORECASE)
+
     # Process section tags
-    result = _process_tag(result, 'section', lambda attrs, inner:
-        f'''<table align="center" width="100%" border="0" cellPadding="0" cellSpacing="0" role="presentation" style="{_style_to_string(_extract_all_style_attributes(attrs))}">
+    def _process_section(attrs, inner):
+        style = _extract_all_style_attributes(attrs)
+        td_style: Dict[str, str] = {}
+        if 'padding' in style:
+            td_style['padding'] = style.pop('padding')
+        if 'text-align' in style:
+            td_style['text-align'] = style.pop('text-align')
+        return f'''<table align="center" width="100%" border="0" cellPadding="0" cellSpacing="0" role="presentation" style="{_style_to_string(style)}">
 <tbody>
 <tr>
-<td>{inner}</td>
+<td style="{_style_to_string(td_style)}">{inner}</td>
 </tr>
 </tbody>
-</table>''')
+</table>'''
+    result = _process_tag(result, 'section', _process_section)
+
+    # Process column tags first (innermost), then row wraps them
+    def _process_column(attrs, inner):
+        style = _extract_all_style_attributes(attrs)
+        if 'vertical-align' not in style:
+            style['vertical-align'] = 'top'
+        style_str = _style_to_string(style)
+        return f'<td class="sevk-column" style="{style_str}">{inner}</td>'
+    result = _process_tag(result, 'column', _process_column)
 
     # Process row tags
-    result = _process_tag(result, 'row', lambda attrs, inner:
-        f'''<table align="center" width="100%" border="0" cellPadding="0" cellSpacing="0" role="presentation" style="{_style_to_string(_extract_all_style_attributes(attrs))}">
-<tbody style="width:100%">
-<tr style="width:100%">{inner}</tr>
-</tbody>
-</table>''')
+    row_counter = [0]
+    gap_styles_arr = []
+    def _process_row(attrs, inner):
+        gap = attrs.get('gap', '0')
+        style = _extract_all_style_attributes(attrs)
+        if 'gap' in style:
+            del style['gap']
 
-    # Process column tags
-    result = _process_tag(result, 'column', lambda attrs, inner:
-        f'<td style="{_style_to_string(_extract_all_style_attributes(attrs))}">{inner}</td>')
+        gap_px = gap.replace('px', '')
+        gap_num = int(gap_px) if gap_px.isdigit() else 0
+        row_id = f'sevk-row-{row_counter[0]}'
+        row_counter[0] += 1
+
+        # Assign equal widths to columns if more than one
+        column_count = len(re.findall(r'class="sevk-column"', inner))
+        if column_count > 1:
+            equal_width = f'{100 // column_count}%'
+            def _add_width(m):
+                existing_style = m.group(1)
+                if 'width:' in existing_style:
+                    return m.group(0)
+                return f'<td class="sevk-column" style="width:{equal_width};{existing_style}"'
+            inner = re.sub(r'<td class="sevk-column" style="([^"]*)"', _add_width, inner)
+
+        # Insert spacer <td> between each column for desktop gap
+        processed_inner = inner
+        if gap_num > 0:
+            spacer_td = f'</td><td class="sevk-gap" style="width:{gap_px}px;min-width:{gap_px}px" width="{gap_px}"></td><td class="sevk-column"'
+            processed_inner = re.sub(r'</td>\s*<td class="sevk-column"', spacer_td, processed_inner)
+
+            # Collect mobile responsive styles
+            gap_styles_arr.append(
+                f'.{row_id} .sevk-gap{{display:none !important;}}'
+                f'.{row_id} > tbody > tr > td.sevk-column{{display:block !important;width:100% !important;margin-bottom:{gap_px}px !important;}}'
+                f'.{row_id} > tbody > tr > td.sevk-column:last-of-type{{margin-bottom:0 !important;}}'
+            )
+
+        style_str = _style_to_string(style)
+        return f'''<table align="center" width="100%" border="0" cellPadding="0" cellSpacing="0" role="presentation" class="sevk-row-table {row_id}" style="{style_str}">
+<tbody style="width:100%">
+<tr style="width:100%">{processed_inner}</tr>
+</tbody>
+</table>'''
+    result = _process_tag(result, 'row', _process_row)
 
     # Process container tags
-    result = _process_tag(result, 'container', lambda attrs, inner:
-        f'''<table align="center" width="100%" border="0" cellPadding="0" cellSpacing="0" role="presentation" style="{_style_to_string(_extract_all_style_attributes(attrs))}">
-<tbody>
-<tr style="width:100%">
-<td>{inner}</td>
-</tr>
-</tbody>
-</table>''')
+    result = _process_tag(result, 'container', _process_container)
 
     # Process heading tags
     def process_heading(attrs: Dict[str, str], inner: str) -> str:
         level = attrs.get('level', '1')
         style = _extract_all_style_attributes(attrs)
+        if 'margin' not in style:
+            style['margin'] = '0'
         return f'<h{level} style="{_style_to_string(style)}">{inner}</h{level}>'
     result = _process_tag(result, 'heading', process_heading)
 
     # Process paragraph tags
-    result = _process_tag(result, 'paragraph', lambda attrs, inner:
-        f'<p style="{_style_to_string(_extract_all_style_attributes(attrs))}">{inner}</p>')
+    def process_paragraph(attrs: Dict[str, str], inner: str) -> str:
+        style = _extract_all_style_attributes(attrs)
+        if 'margin' not in style:
+            style['margin'] = '0'
+        return f'<p style="{_style_to_string(style)}">{inner}</p>'
+    result = _process_tag(result, 'paragraph', process_paragraph)
 
     # Process text tags
     result = _process_tag(result, 'text', lambda attrs, inner:
@@ -215,6 +320,10 @@ def _process_markup(content: str) -> str:
         height = attrs.get('height')
 
         style = _extract_all_style_attributes(attrs)
+        if 'vertical-align' not in style:
+            style['vertical-align'] = 'middle'
+        if 'max-width' not in style:
+            style['max-width'] = '100%'
         if 'outline' not in style:
             style['outline'] = 'none'
         if 'border' not in style:
@@ -223,8 +332,8 @@ def _process_markup(content: str) -> str:
             style['text-decoration'] = 'none'
 
         style_str = _style_to_string(style)
-        width_attr = f' width="{width}"' if width else ''
-        height_attr = f' height="{height}"' if height else ''
+        width_attr = f' width="{width.replace("px", "")}"' if width else ''
+        height_attr = f' height="{height.replace("px", "")}"' if height else ''
 
         return f'<img src="{src}" alt="{alt}"{width_attr}{height_attr} style="{style_str}" />'
 
@@ -240,6 +349,8 @@ def _process_markup(content: str) -> str:
         return f'<hr style="{style_str}"{class_str} />'
 
     result = re.sub(r'<divider([^>]*)/?>',  replace_divider, result, flags=re.IGNORECASE)
+    # Remove any stray </divider> closing tags
+    result = re.sub(r'</divider>', '', result, flags=re.IGNORECASE)
 
     # Process link tags
     def process_link(attrs: Dict[str, str], inner: str) -> str:
@@ -254,6 +365,8 @@ def _process_markup(content: str) -> str:
         list_type = attrs.get('type', 'unordered')
         tag = 'ol' if list_type == 'ordered' else 'ul'
         style = _extract_all_style_attributes(attrs)
+        if 'margin' not in style:
+            style['margin'] = '0'
         if 'list-style-type' in attrs:
             style['list-style-type'] = attrs['list-style-type']
         style_str = _style_to_string(style)
@@ -271,17 +384,11 @@ def _process_markup(content: str) -> str:
         return f'<li style="{style_str}"{class_str}>{inner}</li>'
     result = _process_tag(result, 'li', process_li)
 
-    # Process codeblock tags
-    def process_codeblock(attrs: Dict[str, str], inner: str) -> str:
-        style = _extract_all_style_attributes(attrs)
-        if 'width' not in style:
-            style['width'] = '100%'
-        if 'box-sizing' not in style:
-            style['box-sizing'] = 'border-box'
-        style_str = _style_to_string(style)
-        escaped = inner.replace('<', '&lt;').replace('>', '&gt;')
-        return f'<pre style="{style_str}"><code>{escaped}</code></pre>'
-    result = _process_tag(result, 'codeblock', process_codeblock)
+    # Process codeblock tags with Pygments syntax highlighting
+    result = _process_tag(result, 'codeblock', _process_codeblock)
+
+    # Clean up stray Sevk closing tags that weren't consumed by processTag
+    result = re.sub(r'</(?:container|section|row|column|heading|paragraph|text|button|sevk-link)>', '', result, flags=re.IGNORECASE)
 
     # Clean up wrapper tags
     wrapper_patterns = [
@@ -294,7 +401,333 @@ def _process_markup(content: str) -> str:
     for pattern in wrapper_patterns:
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
 
-    return result.strip()
+    gap_styles = ''
+    if gap_styles_arr:
+        gap_styles = '@media only screen and (max-width:479px){' + ''.join(gap_styles_arr) + '}'
+
+    return result.strip(), gap_styles
+
+
+def _is_truthy(val: Any) -> bool:
+    """Check if a value is truthy for template conditionals."""
+    if val is None or val == '' or val is False or val == 0:
+        return False
+    if isinstance(val, list) and len(val) == 0:
+        return False
+    return True
+
+
+def _evaluate_condition(expr: str, config: Dict[str, Any]) -> bool:
+    trimmed = expr.strip()
+
+    # OR: split on ||, return true if any part is true
+    if '||' in trimmed:
+        return any(_evaluate_condition(part, config) for part in trimmed.split('||'))
+
+    # AND: split on &&, return true if all parts are true
+    if '&&' in trimmed:
+        return all(_evaluate_condition(part, config) for part in trimmed.split('&&'))
+
+    # Equality: key == "value"
+    eq_match = re.match(r'^(\w+)\s*==\s*"([^"]*)"$', trimmed)
+    if eq_match:
+        return str(config.get(eq_match.group(1), '')) == eq_match.group(2)
+
+    # Inequality: key != "value"
+    neq_match = re.match(r'^(\w+)\s*!=\s*"([^"]*)"$', trimmed)
+    if neq_match:
+        return str(config.get(neq_match.group(1), '')) != neq_match.group(2)
+
+    # Simple truthy check
+    return _is_truthy(config.get(trimmed))
+
+
+def _render_template(template: str, config: Dict[str, Any]) -> str:
+    """
+    Render a block template with config values.
+
+    Template syntax:
+      {%variable%}                          - inject config value
+      {%variable ?? fallback%}             - inject with fallback
+      {%#each array as alias%}...{%/each%} - iterate arrays
+      {%alias.key%}                        - access current item in loop
+      {%#if key%}...{%/if%}               - conditional (truthy check)
+      {%#if key%}...{%else%}...{%/if%}    - conditional with else
+      {%#if a && b%}                       - logical AND
+      {%#if a || b%}                       - logical OR
+      {%#if key == "value"%}               - string equality
+      {%#if key != "value"%}               - string inequality
+
+    Double-brace {{...}} variables are preserved untouched.
+    """
+    result = template
+
+    # 1. Process {%#if key%}...{%else%}...{%/if%} conditionals
+    # Process innermost first (body must not contain another {%#if)
+    prev = ''
+    while prev != result:
+        prev = result
+
+        def _replace_if(m):
+            condition = m.group(1)
+            body = m.group(2)
+            cond_result = _evaluate_condition(condition, config)
+            else_idx = body.find('{%else%}')
+            true_branch = body[:else_idx] if else_idx >= 0 else body
+            false_branch = body[else_idx + 8:] if else_idx >= 0 else ''
+            return true_branch if cond_result else false_branch
+
+        result = re.sub(
+            r'\{%#if\s+([^%]+)%\}((?:(?!\{%#if\s)[\s\S])*?)\{%/if%\}',
+            _replace_if,
+            result,
+            count=1
+        )
+
+    # 2. Process {%#each key as alias%}...{%/each%} loops
+    def _replace_each(m):
+        key = m.group(1)
+        alias = m.group(2) or 'this'
+        body = m.group(3)
+        arr = config.get(key)
+        if not isinstance(arr, list) or len(arr) == 0:
+            return ''
+        parts = []
+        for item in arr:
+            item_result = body
+            # Replace {%alias.prop%} with item values
+            item_re = re.compile(r'\{%' + re.escape(alias) + r'\.(\w+)%\}')
+            item_result = item_re.sub(
+                lambda pm: str(item.get(pm.group(1), '') if isinstance(item, dict) else ''),
+                item_result
+            )
+            # Replace {%variable%} with config values (parent scope)
+            item_result = re.sub(
+                r'\{%(\w+)%\}',
+                lambda pm: str(config.get(pm.group(1), '') if config.get(pm.group(1)) is not None else ''),
+                item_result
+            )
+            parts.append(item_result)
+        return ''.join(parts)
+
+    result = re.sub(
+        r'\{%#each\s+(\w+)(?:\s+as\s+(\w+))?%\}([\s\S]*?)\{%/each%\}',
+        _replace_each,
+        result
+    )
+
+    # 3. Process {%variable ?? fallback%} with fallback
+    def _replace_fallback(m):
+        key = m.group(1)
+        fallback = m.group(2).strip()
+        val = config.get(key)
+        if val is not None and val != '':
+            return str(val)
+        return fallback
+
+    result = re.sub(
+        r'\{%(\w+)\s*\?\?\s*([^%]+)%\}',
+        _replace_fallback,
+        result
+    )
+
+    # 4. Process {%variable%} simple injection
+    result = re.sub(
+        r'\{%(\w+)%\}',
+        lambda m: str(config[m.group(1)]) if config.get(m.group(1)) is not None else '',
+        result
+    )
+
+    return result
+
+
+def _process_block_tag(attrs: Dict[str, str], inner: str) -> str:
+    """
+    Process a <block> tag using the template engine.
+    Reads template from inner content or attrs, renders with config.
+    Returns sevk markup for further processing.
+    """
+    template = inner.strip() if inner else ''
+    if not template:
+        template = attrs.get('template', '')
+    if not template:
+        return ''
+
+    config_str = attrs.get('config', '{}').replace("'", '"').replace('&quot;', '"').replace('&amp;', '&')
+    try:
+        config = json.loads(config_str)
+    except Exception:
+        config = {}
+
+    return _render_template(template, config)
+
+
+# Theme-to-Pygments style mapping
+_THEME_STYLE_MAP: Dict[str, str] = {
+    'oneDark': 'monokai',
+    'vscDarkPlus': 'monokai',
+    'vs': 'friendly',
+    'dracula': 'dracula',
+    'nightOwl': 'monokai',
+    'duotoneDark': 'monokai',
+    'duotoneLight': 'friendly',
+    'github': 'github-dark',
+    'okaidia': 'monokai',
+    'synthwave84': 'monokai',
+    'shadesOfPurple': 'monokai',
+    'coldarkDark': 'monokai',
+    'coldarkCold': 'friendly',
+    'coy': 'friendly',
+    'materialDark': 'monokai',
+    'materialLight': 'friendly',
+    'materialOceanic': 'monokai',
+}
+
+# Default base styles matching the Node SDK's oneDark theme
+_CODEBLOCK_BASE_STYLES: Dict[str, str] = {
+    'background-color': '#282c34',
+    'color': '#abb2bf',
+    'font-family': "'Fira Code', 'Fira Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace",
+    'font-size': '13px',
+    'text-align': 'left',
+    'white-space': 'pre',
+    'word-spacing': 'normal',
+    'word-break': 'normal',
+    'line-height': '1.5',
+    'tab-size': '4',
+    'hyphens': 'none',
+    'padding': '1em',
+    'margin': '.5em 0',
+    'overflow': 'auto',
+    'border-radius': '8px',
+}
+
+
+def _process_codeblock(attrs: Dict[str, str], inner: str) -> str:
+    """Process codeblock tag with Pygments syntax highlighting."""
+    language = attrs.get('language', 'javascript')
+    theme_name = attrs.get('theme', 'oneDark')
+    line_numbers = attrs.get('line-numbers', 'false') == 'true'
+    font_family = attrs.get('font-family')
+    custom_style = _extract_all_style_attributes(attrs)
+
+    if not inner:
+        return '<pre><code></code></pre>'
+
+    # Build base styles
+    base_style: Dict[str, str] = {}
+    base_style.update(_CODEBLOCK_BASE_STYLES)
+    base_style['width'] = '100%'
+    base_style['box-sizing'] = 'border-box'
+
+    if font_family:
+        base_style['font-family'] = font_family
+
+    # Apply custom styles last so they override defaults
+    base_style.update(custom_style)
+
+    try:
+        from pygments import highlight as pygments_highlight
+        from pygments.lexers import get_lexer_by_name, TextLexer
+        from pygments.formatters import HtmlFormatter
+        from pygments.util import ClassNotFound
+
+        # Resolve the Pygments style name from theme
+        pygments_style = _THEME_STYLE_MAP.get(theme_name, 'monokai')
+
+        try:
+            lexer = get_lexer_by_name(language, stripall=True)
+        except ClassNotFound:
+            lexer = None
+
+        if lexer is None:
+            # Language not recognized - fall back to plain text
+            style_str = _style_to_string(base_style)
+            escaped = inner.replace('<', '&lt;').replace('>', '&gt;')
+            return f'<pre style="{style_str}"><code>{escaped}</code></pre>'
+
+        # Use HtmlFormatter with inline styles (noclasses=True) for email compatibility
+        formatter = HtmlFormatter(
+            style=pygments_style,
+            noclasses=True,
+            nowrap=True,
+            linenos=False,
+        )
+
+        # Highlight the code
+        highlighted = pygments_highlight(inner, lexer, formatter)
+
+        # Build line-based output matching Node SDK format
+        lines = highlighted.split('\n')
+        # Remove trailing empty line from Pygments output
+        if lines and lines[-1] == '':
+            lines = lines[:-1]
+
+        lines_html = []
+        for i, line_content in enumerate(lines):
+            line_number_html = ''
+            if line_numbers:
+                line_number_html = f'<span style="width:2em;display:inline-block">{i + 1}</span>'
+            # Use &nbsp; for empty lines to preserve spacing
+            content = line_content if line_content.strip() else '&nbsp;'
+            lines_html.append(f'<p style="margin:0;min-height:1em">{line_number_html}{content}</p>')
+
+        style_str = _style_to_string(base_style)
+        return f'<pre style="{style_str}"><code>{"".join(lines_html)}</code></pre>'
+
+    except ImportError:
+        # Pygments not available - fall back to plain <pre><code>
+        style_str = _style_to_string(base_style)
+        escaped = inner.replace('<', '&lt;').replace('>', '&gt;')
+        return f'<pre style="{style_str}"><code>{escaped}</code></pre>'
+
+
+def _process_container(attrs: Dict[str, str], inner: str) -> str:
+    """Process container tag - split visual styles onto <td>, layout styles onto <table>"""
+    style = _extract_all_style_attributes(attrs)
+    td_style: Dict[str, str] = {}
+    table_style: Dict[str, str] = {}
+
+    # Visual style properties that belong on <td>
+    visual_keys = {
+        'background-color', 'background-image', 'background-size', 'background-position', 'background-repeat',
+        'border', 'border-top', 'border-right', 'border-bottom', 'border-left',
+        'border-color', 'border-width', 'border-style',
+        'border-radius', 'border-top-left-radius', 'border-top-right-radius',
+        'border-bottom-left-radius', 'border-bottom-right-radius',
+        'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    }
+
+    for key, value in style.items():
+        if key in visual_keys:
+            td_style[key] = value
+        else:
+            table_style[key] = value
+
+    # Add border-collapse: separate when border-radius is used
+    has_border_radius = (
+        td_style.get('border-radius')
+        or td_style.get('border-top-left-radius')
+        or td_style.get('border-top-right-radius')
+        or td_style.get('border-bottom-left-radius')
+        or td_style.get('border-bottom-right-radius')
+    )
+    if has_border_radius:
+        table_style['border-collapse'] = 'separate'
+
+    # Make fixed widths responsive: width becomes max-width, width set to 100%
+    if table_style.get('width') and table_style['width'] != '100%' and table_style['width'] != 'auto':
+        if 'max-width' not in table_style:
+            table_style['max-width'] = table_style['width']
+        table_style['width'] = '100%'
+
+    return f'''<table align="center" width="100%" border="0" cellPadding="0" cellSpacing="0" role="presentation" style="{_style_to_string(table_style)}">
+<tbody>
+<tr style="width:100%">
+<td style="{_style_to_string(td_style)}">{inner}</td>
+</tr>
+</tbody>
+</table>'''
 
 
 def _process_button(attrs: Dict[str, str], inner: str) -> str:
@@ -415,14 +848,15 @@ def _process_tag(content: str, tag_name: str, processor: Callable[[Dict[str, str
             attrs_str = match.group(1)
 
             # Find the next close tag after this opening tag
-            close_pos = result.lower().find(close_tag.lower(), inner_start)
-            if close_pos == -1:
+            close_match = re.search(re.escape(close_tag), result[inner_start:], re.IGNORECASE)
+            if not close_match:
                 continue
+            close_pos = inner_start + close_match.start()
 
             inner = result[inner_start:close_pos]
 
             # Check if there's another opening tag inside
-            if open_tag_start.lower() in inner.lower():
+            if re.search(re.escape(open_tag_start), inner, re.IGNORECASE):
                 # This tag has nested same tags, skip it
                 continue
 
@@ -444,8 +878,8 @@ def _process_tag(content: str, tag_name: str, processor: Callable[[Dict[str, str
 def _parse_attributes(attrs_str: str) -> Dict[str, str]:
     """Parse attributes from an attribute string"""
     attrs = {}
-    for match in re.finditer(r'([\w-]+)=["\']([^"\']*)["\']', attrs_str):
-        attrs[match.group(1)] = match.group(2)
+    for match in re.finditer(r'([\w-]+)=(?:"([^"]*)"|\'([^\']*)\')', attrs_str):
+        attrs[match.group(1)] = match.group(2) if match.group(2) is not None else match.group(3)
     return attrs
 
 
@@ -480,6 +914,10 @@ def _extract_all_style_attributes(attrs: Dict[str, str]) -> Dict[str, str]:
         style['height'] = attrs['height']
     if 'max-width' in attrs:
         style['max-width'] = attrs['max-width']
+    if 'max-height' in attrs:
+        style['max-height'] = attrs['max-height']
+    if 'min-width' in attrs:
+        style['min-width'] = attrs['min-width']
     if 'min-height' in attrs:
         style['min-height'] = attrs['min-height']
 
@@ -541,6 +979,27 @@ def _extract_all_style_attributes(attrs: Dict[str, str]) -> Dict[str, str]:
         if 'border-bottom-right-radius' in attrs:
             style['border-bottom-right-radius'] = attrs['border-bottom-right-radius']
 
+    # Background image
+    background_image = attrs.get('background-image')
+    background_size = attrs.get('background-size')
+    background_position = attrs.get('background-position')
+    background_repeat = attrs.get('background-repeat')
+
+    if background_image:
+        style['background-image'] = f"url('{background_image}')"
+    if background_size:
+        style['background-size'] = background_size
+    elif background_image:
+        style['background-size'] = 'cover'
+    if background_position:
+        style['background-position'] = background_position
+    elif background_image:
+        style['background-position'] = 'center'
+    if background_repeat:
+        style['background-repeat'] = background_repeat
+    elif background_image:
+        style['background-repeat'] = 'no-repeat'
+
     return style
 
 
@@ -560,6 +1019,31 @@ def render(markup: str) -> str:
         The rendered HTML string
     """
     return generate_email_from_markup(markup)
+
+
+def extract_variables(markup: str) -> List[str]:
+    """
+    Extract template variables from Sevk markup.
+
+    Finds all {{variable}} patterns and returns unique variable names.
+    Handles fallback syntax: {{var ?? fallback}} by extracting just the variable name.
+
+    Args:
+        markup: The Sevk markup to scan
+
+    Returns:
+        A list of unique variable names found in the markup
+    """
+    variables = []
+    seen = set()
+    for match in re.finditer(r'\{\{(.+?)\}\}', markup):
+        raw = match.group(1).strip()
+        # Handle fallback syntax: {{var ?? fallback}}
+        var_name = raw.split('??')[0].strip()
+        if var_name not in seen:
+            seen.add(var_name)
+            variables.append(var_name)
+    return variables
 
 
 class Renderer:

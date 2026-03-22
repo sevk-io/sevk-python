@@ -2,7 +2,7 @@
 Topics Resource
 """
 
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..client import HttpClient
@@ -54,3 +54,43 @@ class Topics:
     def delete(self, audience_id: str, topic_id: str) -> None:
         """Delete a topic"""
         self._client.delete(f"/audiences/{audience_id}/topics/{topic_id}")
+
+    def add_contacts(self, audience_id: str, topic_id: str, contact_ids: List[str]) -> Dict[str, Any]:
+        """Add contacts to a topic"""
+        return self._client.post(
+            f"/audiences/{audience_id}/topics/{topic_id}/contacts",
+            {"contactIds": contact_ids}
+        )
+
+    def remove_contact(self, audience_id: str, topic_id: str, contact_id: str) -> None:
+        """Remove a contact from a topic"""
+        self._client.delete(f"/audiences/{audience_id}/topics/{topic_id}/contacts/{contact_id}")
+
+    def list_contacts(
+        self,
+        audience_id: str,
+        topic_id: str,
+        page: Optional[int] = 1,
+        limit: Optional[int] = 20,
+    ) -> Dict[str, Any]:
+        """List contacts for a topic
+
+        Args:
+            audience_id: The audience ID
+            topic_id: The topic ID
+            page: Page number (default 1)
+            limit: Number of results per page (default 20)
+
+        Returns:
+            Dict with topic contacts
+        """
+        params = {}
+        if page is not None:
+            params["page"] = page
+        if limit is not None:
+            params["limit"] = limit
+
+        return self._client.get(
+            f"/audiences/{audience_id}/topics/{topic_id}/contacts",
+            params or None,
+        )

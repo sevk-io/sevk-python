@@ -11,6 +11,8 @@ from .topics import Topics
 from .segments import Segments
 from .subscriptions import Subscriptions
 from .emails import Emails
+from .webhooks import Webhooks
+from .events import Events
 
 __all__ = [
     "Contacts",
@@ -22,4 +24,6 @@ __all__ = [
     "Segments",
     "Subscriptions",
     "Emails",
+    "Webhooks",
+    "Events",
 ]

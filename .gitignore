@@ -147,3 +147,4 @@ cython_debug/
 # OS
 .DS_Store
 Thumbs.db
+markup-output.html

@@ -70,3 +70,11 @@ class Segments:
     def delete(self, audience_id: str, segment_id: str) -> Dict[str, Any]:
         """Delete a segment"""
         return self._client.delete(f"/audiences/{audience_id}/segments/{segment_id}")
+
+    def calculate(self, audience_id: str, segment_id: str) -> Dict[str, Any]:
+        """Calculate a segment's matching contacts"""
+        return self._client.get(f"/audiences/{audience_id}/segments/{segment_id}/calculate")
+
+    def preview(self, audience_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Preview how many contacts match given segment rules before saving"""
+        return self._client.post(f"/audiences/{audience_id}/segments/preview", data)

@@ -78,3 +78,15 @@ class Audiences:
             f"/audiences/{audience_id}/contacts",
             {"contactIds": contact_ids}
         )
+
+    def remove_contact(self, audience_id: str, contact_id: str) -> None:
+        """Remove a contact from an audience"""
+        self._client.delete(f"/audiences/{audience_id}/contacts/{contact_id}")
+
+    def list_contacts(
+        self,
+        audience_id: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """List contacts in an audience"""
+        return self._client.get(f"/audiences/{audience_id}/contacts", params)

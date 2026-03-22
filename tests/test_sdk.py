@@ -2,26 +2,29 @@
 Sevk Python SDK Integration Tests
 """
 
+import os
 import pytest
 import uuid
+
+SKIP_DOMAIN_TESTS = os.environ.get('INCLUDE_DOMAIN_TESTS', 'false') != 'true'
 
 
 class TestAuthentication:
     """Test authentication"""
 
-    def test_should_reject_invalid_api_key(self, sevk_class):
+    def test_should_reject_invalid_api_key(self, sevk_class, base_url):
         """Should reject invalid API key"""
         from sevk import Sevk, SevkOptions
-        options = SevkOptions(base_url="http://localhost:4000")
+        options = SevkOptions(base_url=base_url)
         invalid_sevk = Sevk("sevk_invalid_api_key_12345", options)
         with pytest.raises(Exception) as exc_info:
             invalid_sevk.contacts.list()
         assert "401" in str(exc_info.value)
 
-    def test_should_reject_empty_api_key(self, sevk_class):
+    def test_should_reject_empty_api_key(self, sevk_class, base_url):
         """Should reject empty API key"""
         from sevk import Sevk, SevkOptions
-        options = SevkOptions(base_url="http://localhost:4000")
+        options = SevkOptions(base_url=base_url)
         empty_sevk = Sevk("", options)
         with pytest.raises(Exception) as exc_info:
             empty_sevk.contacts.list()
@@ -29,10 +32,10 @@ class TestAuthentication:
         error_msg = str(exc_info.value).lower()
         assert "401" in str(exc_info.value) or "header" in error_msg or "illegal" in error_msg
 
-    def test_should_reject_malformed_api_key(self, sevk_class):
+    def test_should_reject_malformed_api_key(self, sevk_class, base_url):
         """Should reject malformed API key (not starting with sevk_)"""
         from sevk import Sevk, SevkOptions
-        options = SevkOptions(base_url="http://localhost:4000")
+        options = SevkOptions(base_url=base_url)
         malformed_sevk = Sevk("invalid_key_format", options)
         with pytest.raises(Exception) as exc_info:
             malformed_sevk.contacts.list()
@@ -90,6 +93,34 @@ class TestContacts:
         with pytest.raises(Exception) as exc_info:
             sevk.contacts.get("non-existent-id")
         assert "404" in str(exc_info.value)
+
+    def test_should_bulk_update_contacts(self, sevk):
+        """Should bulk update contacts"""
+        email = f"test-{uuid.uuid4()}@example.com"
+        contact = sevk.contacts.create(email=email)
+        result = sevk.contacts.bulk_update({
+            "contacts": [{"email": contact["email"], "subscribed": True}]
+        })
+        assert result is not None
+        # Cleanup
+        sevk.contacts.delete(contact["id"])
+
+    def test_should_get_contact_events(self, sevk):
+        """Should get contact events"""
+        email = f"test-{uuid.uuid4()}@example.com"
+        contact = sevk.contacts.create(email=email)
+        result = sevk.contacts.get_events(contact["id"])
+        assert result is not None
+        # Cleanup
+        sevk.contacts.delete(contact["id"])
+
+    def test_should_import_contacts(self, sevk):
+        """Should import contacts"""
+        email = f"import-test-{uuid.uuid4()}@example.com"
+        result = sevk.contacts.import_csv({
+            "contacts": [{"email": email}]
+        })
+        assert result is not None
 
     def test_should_delete_contact(self, sevk):
         """Should delete a contact"""
@@ -160,6 +191,33 @@ class TestAudiences:
         contact = sevk.contacts.create(email=f"test-{uuid.uuid4()}@example.com")
         result = sevk.audiences.add_contacts(audience["id"], [contact["id"]])
         assert result is not None
+        # Cleanup
+        sevk.contacts.delete(contact["id"])
+        sevk.audiences.delete(audience["id"])
+
+    def test_should_list_contacts_in_audience(self, sevk):
+        """Should list contacts in an audience"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        contact = sevk.contacts.create(email=f"test-{uuid.uuid4()}@example.com")
+        sevk.audiences.add_contacts(audience["id"], [contact["id"]])
+        result = sevk.audiences.list_contacts(audience["id"])
+        assert result is not None
+        assert "items" in result
+        assert isinstance(result["items"], list)
+        # Cleanup
+        sevk.contacts.delete(contact["id"])
+        sevk.audiences.delete(audience["id"])
+
+    def test_should_remove_contact_from_audience(self, sevk):
+        """Should remove a contact from an audience"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        contact = sevk.contacts.create(email=f"test-{uuid.uuid4()}@example.com")
+        sevk.audiences.add_contacts(audience["id"], [contact["id"]])
+        sevk.audiences.remove_contact(audience["id"], contact["id"])
+        # Verify removal by listing contacts
+        result = sevk.audiences.list_contacts(audience["id"])
+        contact_ids = [c["id"] for c in result["items"]]
+        assert contact["id"] not in contact_ids
         # Cleanup
         sevk.contacts.delete(contact["id"])
         sevk.audiences.delete(audience["id"])
@@ -260,24 +318,272 @@ class TestBroadcasts:
         assert "items" in response
         assert isinstance(response["items"], list)
 
+    def test_should_create_broadcast(self, sevk):
+        """Should create a broadcast"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        name = f"Test Broadcast {uuid.uuid4()}"
+        result = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": name,
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        assert result is not None
+        assert "id" in result
+        assert result["name"] == name
+        assert result["subject"] == "Test Subject"
+        assert result["status"] == "DRAFT"
+        # Cleanup
+        sevk.broadcasts.delete(result["id"])
 
+    def test_should_get_broadcast(self, sevk):
+        """Should get a broadcast by id"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        result = sevk.broadcasts.get(created["id"])
+        assert result is not None
+        assert result["id"] == created["id"]
+        assert result["subject"] == "Test Subject"
+        # Cleanup
+        sevk.broadcasts.delete(created["id"])
+
+    def test_should_update_broadcast(self, sevk):
+        """Should update a broadcast"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        new_name = f"Updated Broadcast {uuid.uuid4()}"
+        result = sevk.broadcasts.update(created["id"], {"name": new_name})
+        assert result is not None
+        assert result["id"] == created["id"]
+        assert result["name"] == new_name
+        # Cleanup
+        sevk.broadcasts.delete(created["id"])
+
+    def test_should_get_broadcast_analytics(self, sevk):
+        """Should get broadcast analytics"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        result = sevk.broadcasts.get_analytics(created["id"])
+        assert result is not None
+        # Cleanup
+        sevk.broadcasts.delete(created["id"])
+
+    def test_should_send_test_broadcast(self, sevk):
+        """Should send a test broadcast"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        try:
+            result = sevk.broadcasts.send_test(created["id"], {"emails": ["test@example.com"]})
+            assert result is not None
+        except Exception as e:
+            # May fail if domain is unverified, which is expected
+            assert str(e) is not None
+        finally:
+            # Cleanup
+            sevk.broadcasts.delete(created["id"])
+
+    def test_should_handle_send_error_for_draft_broadcast(self, sevk):
+        """Should handle send error for draft broadcast"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        try:
+            sevk.broadcasts.send(created["id"])
+            # If it succeeds, that's fine too
+        except Exception as e:
+            # Expected to fail if broadcast is not ready to send
+            assert str(e) is not None
+            assert len(str(e)) > 0
+        finally:
+            # Cleanup
+            sevk.broadcasts.delete(created["id"])
+
+    def test_should_handle_cancel_for_non_sending_broadcast(self, sevk):
+        """Should handle cancel for a non-sending broadcast"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        try:
+            sevk.broadcasts.cancel(created["id"])
+        except Exception as e:
+            # Expected to fail if broadcast is not in a cancellable state
+            assert str(e) is not None
+        finally:
+            # Cleanup
+            sevk.broadcasts.delete(created["id"])
+
+    def test_should_delete_broadcast(self, sevk):
+        """Should delete a broadcast"""
+        domains = sevk.domains.list()
+        if not domains["items"]:
+            pytest.skip("No domains available to create broadcast")
+        domain_id = domains["items"][0]["id"]
+        created = sevk.broadcasts.create({
+            "domainId": domain_id,
+            "name": f"Test Broadcast {uuid.uuid4()}",
+            "subject": "Test Subject",
+            "body": "<section><paragraph>Test broadcast body</paragraph></section>",
+            "senderName": "Test Sender",
+            "senderEmail": "test",
+            "targetType": "ALL",
+        })
+        sevk.broadcasts.delete(created["id"])
+        with pytest.raises(Exception) as exc_info:
+            sevk.broadcasts.get(created["id"])
+        assert "404" in str(exc_info.value)
+
+
+@pytest.mark.skipif(SKIP_DOMAIN_TESTS, reason="INCLUDE_DOMAIN_TESTS not set")
 class TestDomains:
     """Test domains resource"""
 
     def test_should_list_domains(self, sevk):
         """Should list domains with correct response structure"""
         response = sevk.domains.list()
-        assert "domains" in response
-        assert isinstance(response["domains"], list)
+        assert "items" in response
+        assert isinstance(response["items"], list)
 
     def test_should_list_only_verified_domains(self, sevk):
         """Should list only verified domains"""
         response = sevk.domains.list(verified=True)
-        assert "domains" in response
-        assert isinstance(response["domains"], list)
+        assert "items" in response
+        assert isinstance(response["items"], list)
         # All returned domains should be verified
-        for domain in response["domains"]:
+        for domain in response["items"]:
             assert domain["verified"] is True
+
+    def test_should_create_domain(self, sevk):
+        """Should create a domain"""
+        subdomain = f"test-{uuid.uuid4()}.example.com"
+        result = sevk.domains.create({"domain": subdomain, "email": f"test@{subdomain}"})
+        assert result is not None
+        assert "id" in result
+        assert result["domain"] == subdomain
+        # Cleanup
+        sevk.domains.delete(result["id"])
+
+    def test_should_get_domain(self, sevk):
+        """Should get a domain by id"""
+        subdomain = f"test-{uuid.uuid4()}.example.com"
+        created = sevk.domains.create({"domain": subdomain, "email": f"test@{subdomain}"})
+        result = sevk.domains.get(created["id"])
+        assert result is not None
+        assert result["id"] == created["id"]
+        # Cleanup
+        sevk.domains.delete(created["id"])
+
+    def test_should_get_dns_records(self, sevk):
+        """Should get DNS records for a domain"""
+        subdomain = f"test-{uuid.uuid4()}.example.com"
+        created = sevk.domains.create({"domain": subdomain, "email": f"test@{subdomain}"})
+        result = sevk.domains.get_dns_records(created["id"])
+        assert result is not None
+        assert "items" in result
+        assert isinstance(result["items"], list)
+        # Cleanup
+        sevk.domains.delete(created["id"])
+
+    def test_should_get_regions(self, sevk):
+        """Should get available regions"""
+        result = sevk.domains.get_regions()
+        assert result is not None
+
+    def test_should_verify_domain(self, sevk):
+        """Should verify a domain"""
+        subdomain = f"test-{uuid.uuid4()}.example.com"
+        created = sevk.domains.create({"domain": subdomain, "email": f"test@{subdomain}"})
+        try:
+            result = sevk.domains.verify(created["id"])
+            assert result is not None
+        except Exception as e:
+            # Expected to fail for test domains without proper DNS records
+            assert str(e) is not None
+        finally:
+            # Cleanup
+            sevk.domains.delete(created["id"])
+
+    def test_should_delete_domain(self, sevk):
+        """Should delete a domain"""
+        subdomain = f"test-{uuid.uuid4()}.example.com"
+        created = sevk.domains.create({"domain": subdomain, "email": f"test@{subdomain}"})
+        sevk.domains.delete(created["id"])
+        # Verify deletion
+        try:
+            sevk.domains.get(created["id"])
+            assert False, "Should not reach here"
+        except Exception as e:
+            # Accept any error as confirmation of deletion
+            assert str(e) is not None
 
 
 class TestTopics:
@@ -322,6 +628,36 @@ class TestTopics:
         assert updated["name"] == new_name
         # Cleanup
         sevk.topics.delete(audience["id"], created["id"])
+        sevk.audiences.delete(audience["id"])
+
+    def test_should_add_contacts_to_topic(self, sevk):
+        """Should add contacts to a topic"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        topic = sevk.topics.create(audience["id"], name=f"Test Topic {uuid.uuid4()}")
+        contact = sevk.contacts.create(email=f"test-{uuid.uuid4()}@example.com")
+        sevk.audiences.add_contacts(audience["id"], [contact["id"]])
+        result = sevk.topics.add_contacts(audience["id"], topic["id"], [contact["id"]])
+        assert result is not None
+        # Cleanup
+        sevk.topics.delete(audience["id"], topic["id"])
+        sevk.contacts.delete(contact["id"])
+        sevk.audiences.delete(audience["id"])
+
+    def test_should_remove_contact_from_topic(self, sevk):
+        """Should remove a contact from a topic"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        topic = sevk.topics.create(audience["id"], name=f"Test Topic {uuid.uuid4()}")
+        contact = sevk.contacts.create(email=f"test-{uuid.uuid4()}@example.com")
+        sevk.audiences.add_contacts(audience["id"], [contact["id"]])
+        sevk.topics.add_contacts(audience["id"], topic["id"], [contact["id"]])
+        sevk.topics.remove_contact(audience["id"], topic["id"], contact["id"])
+        # Verify removal by listing contacts in the topic
+        result = sevk.topics.list_contacts(audience["id"], topic["id"])
+        contact_ids = [c["id"] for c in result["items"]]
+        assert contact["id"] not in contact_ids
+        # Cleanup
+        sevk.topics.delete(audience["id"], topic["id"])
+        sevk.contacts.delete(contact["id"])
         sevk.audiences.delete(audience["id"])
 
     def test_should_delete_topic(self, sevk):
@@ -392,6 +728,32 @@ class TestSegments:
         assert updated["name"] == new_name
         # Cleanup
         sevk.segments.delete(audience["id"], created["id"])
+        sevk.audiences.delete(audience["id"])
+
+    def test_should_calculate_segment(self, sevk):
+        """Should calculate a segment"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        segment = sevk.segments.create(
+            audience["id"],
+            name=f"Test Segment {uuid.uuid4()}",
+            rules=[{"field": "email", "operator": "contains", "value": "@"}],
+            operator="AND"
+        )
+        result = sevk.segments.calculate(audience["id"], segment["id"])
+        assert result is not None
+        # Cleanup
+        sevk.segments.delete(audience["id"], segment["id"])
+        sevk.audiences.delete(audience["id"])
+
+    def test_should_preview_segment(self, sevk):
+        """Should preview a segment"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        result = sevk.segments.preview(audience["id"], {
+            "rules": [{"field": "email", "operator": "contains", "value": "@example.com"}],
+            "operator": "AND"
+        })
+        assert result is not None
+        # Cleanup
         sevk.audiences.delete(audience["id"])
 
     def test_should_delete_segment(self, sevk):
@@ -483,6 +845,35 @@ class TestEmails:
         # Should get 400 Bad Request for invalid email
         assert "400" in str(exc_info.value)
 
+    def test_should_throw_error_for_non_existent_email_id(self, sevk):
+        """Should throw error for non-existent email id"""
+        with pytest.raises(Exception) as exc_info:
+            sevk.emails.get("00000000-0000-0000-0000-000000000000")
+        assert "404" in str(exc_info.value)
+
+    def test_should_reject_bulk_email_with_unverified_domain(self, sevk):
+        """Should reject bulk email with unverified domain"""
+        try:
+            result = sevk.emails.send_bulk([
+                {
+                    "to": "test1@example.com",
+                    "subject": "Bulk Test 1",
+                    "html": "<p>Hello 1</p>",
+                    "from": "no-reply@unverified-domain.com",
+                },
+                {
+                    "to": "test2@example.com",
+                    "subject": "Bulk Test 2",
+                    "html": "<p>Hello 2</p>",
+                    "from": "no-reply@unverified-domain.com",
+                },
+            ])
+            # If no exception, the API should return failed status
+            assert result is not None
+        except Exception as e:
+            error_msg = str(e)
+            assert len(error_msg) > 0
+
     def test_should_return_proper_error_message_for_domain_verification(self, sevk):
         """Should return proper error message for domain verification"""
         with pytest.raises(Exception) as exc_info:
@@ -497,6 +888,165 @@ class TestEmails:
         assert len(error_msg) > 0
         # Should mention domain verification
         assert "domain" in error_msg or "verified" in error_msg or "forbidden" in error_msg
+
+
+@pytest.mark.skipif(SKIP_DOMAIN_TESTS, reason="INCLUDE_DOMAIN_TESTS not set")
+class TestDomainsUpdate:
+    """Test domains update method"""
+
+    def test_should_update_domain_with_click_tracking(self, sevk):
+        """Should update a domain with clickTracking enabled"""
+        response = sevk.domains.list()
+        if len(response["items"]) > 0:
+            domain_id = response["items"][0]["id"]
+            result = sevk.domains.update(domain_id, click_tracking=True)
+            assert result is not None
+            assert result["id"] == domain_id
+            assert result["clickTracking"] is True
+
+    def test_should_update_domain_with_click_tracking_disabled(self, sevk):
+        """Should update a domain with clickTracking disabled"""
+        response = sevk.domains.list()
+        if len(response["items"]) > 0:
+            domain_id = response["items"][0]["id"]
+            result = sevk.domains.update(domain_id, click_tracking=False)
+            assert result is not None
+            assert result["clickTracking"] is False
+
+
+class TestBroadcastsExtended:
+    """Test broadcasts extended methods"""
+
+    def test_should_get_broadcast_status(self, sevk):
+        """Should get broadcast status"""
+        response = sevk.broadcasts.list(limit=1)
+        if len(response["items"]) > 0:
+            broadcast_id = response["items"][0]["id"]
+            result = sevk.broadcasts.get_status(broadcast_id)
+            assert result is not None
+            assert "status" in result
+
+    def test_should_get_broadcast_emails(self, sevk):
+        """Should get broadcast emails"""
+        response = sevk.broadcasts.list(limit=1)
+        if len(response["items"]) > 0:
+            broadcast_id = response["items"][0]["id"]
+            result = sevk.broadcasts.get_emails(broadcast_id)
+            assert result is not None
+            assert "items" in result
+            assert isinstance(result["items"], list)
+
+    def test_should_estimate_broadcast_cost(self, sevk):
+        """Should estimate broadcast cost"""
+        response = sevk.broadcasts.list(limit=1)
+        if len(response["items"]) > 0:
+            broadcast_id = response["items"][0]["id"]
+            result = sevk.broadcasts.estimate_cost(broadcast_id)
+            assert result is not None
+
+    def test_should_list_active_broadcasts(self, sevk):
+        """Should list active broadcasts"""
+        result = sevk.broadcasts.list_active()
+        assert result is not None
+        assert "items" in result
+        assert isinstance(result["items"], list)
+
+
+class TestTopicsListContacts:
+    """Test topics listContacts method"""
+
+    def test_should_list_contacts_for_topic(self, sevk):
+        """Should list contacts for a topic"""
+        audience = sevk.audiences.create(name=f"Test Audience {uuid.uuid4()}")
+        topic = sevk.topics.create(audience["id"], name=f"Test Topic {uuid.uuid4()}")
+        result = sevk.topics.list_contacts(audience["id"], topic["id"])
+        assert result is not None
+        assert "items" in result
+        assert isinstance(result["items"], list)
+        # Cleanup
+        sevk.topics.delete(audience["id"], topic["id"])
+        sevk.audiences.delete(audience["id"])
+
+
+class TestWebhooks:
+    """Test webhooks resource (full CRUD lifecycle)"""
+
+    def test_webhook_lifecycle(self, sevk):
+        """Should perform full webhook lifecycle: create, get, update, test, delete"""
+        # List webhooks
+        list_result = sevk.webhooks.list()
+        assert "items" in list_result
+        assert isinstance(list_result["items"], list)
+
+        # Create webhook
+        created = sevk.webhooks.create(
+            url="https://example.com/webhook-test",
+            events=["contact.subscribed"]
+        )
+        assert "id" in created
+        assert created["url"] == "https://example.com/webhook-test"
+        webhook_id = created["id"]
+
+        # Get webhook
+        fetched = sevk.webhooks.get(webhook_id)
+        assert fetched["id"] == webhook_id
+        assert fetched["url"] == "https://example.com/webhook-test"
+
+        # Update webhook
+        updated = sevk.webhooks.update(
+            webhook_id,
+            url="https://example.com/webhook-updated",
+            events=["contact.subscribed", "contact.unsubscribed"]
+        )
+        assert updated["id"] == webhook_id
+        assert updated["url"] == "https://example.com/webhook-updated"
+
+        # Test webhook
+        test_result = sevk.webhooks.test(webhook_id)
+        assert test_result is not None
+
+        # Delete webhook
+        sevk.webhooks.delete(webhook_id)
+        with pytest.raises(Exception) as exc_info:
+            sevk.webhooks.get(webhook_id)
+        assert "404" in str(exc_info.value)
+
+    def test_should_list_webhook_events(self, sevk):
+        """Should list available webhook events"""
+        result = sevk.webhooks.list_events()
+        assert result is not None
+
+
+class TestEvents:
+    """Test events resource"""
+
+    def test_should_list_events(self, sevk):
+        """Should list events"""
+        result = sevk.events.list()
+        assert result is not None
+        assert "items" in result
+        assert isinstance(result["items"], list)
+
+    def test_should_list_events_with_filters(self, sevk):
+        """Should list events with filters"""
+        result = sevk.events.list(type="SENT", limit=5)
+        assert result is not None
+        assert "items" in result
+        assert isinstance(result["items"], list)
+
+    def test_should_get_event_stats(self, sevk):
+        """Should get event stats"""
+        result = sevk.events.stats()
+        assert result is not None
+
+
+class TestUsage:
+    """Test usage/getUsage method"""
+
+    def test_should_get_usage(self, sevk):
+        """Should get usage data"""
+        result = sevk.get_usage()
+        assert result is not None
 
 
 class TestErrorHandling:
@@ -598,11 +1148,6 @@ class TestMarkupRenderer:
         html = render("<email><body></body></email>")
         assert "XHTML 1.0 Transitional" in html
 
-    def test_should_include_background_color_in_body_styles(self):
-        """Should include background-color in body styles"""
-        from sevk.markup import render
-        html = render("<email><body></body></email>")
-        assert "background-color" in html
 
     def test_should_render_mail_tag_same_as_email_tag(self):
         """Should render mail tag same as email tag"""

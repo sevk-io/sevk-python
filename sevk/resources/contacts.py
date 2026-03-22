@@ -99,3 +99,15 @@ class Contacts:
     def delete(self, contact_id: str) -> None:
         """Delete a contact"""
         self._client.delete(f"/contacts/{contact_id}")
+
+    def bulk_update(self, updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Bulk update contacts"""
+        return self._client.put("/contacts/bulk-update", updates)
+
+    def import_csv(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Import contacts from CSV"""
+        return self._client.post("/contacts/import", params)
+
+    def get_events(self, contact_id: str) -> Dict[str, Any]:
+        """Get events for a contact"""
+        return self._client.get(f"/contacts/{contact_id}/events")

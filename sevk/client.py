@@ -15,6 +15,9 @@ from .resources.topics import Topics
 from .resources.segments import Segments
 from .resources.subscriptions import Subscriptions
 from .resources.emails import Emails
+from .resources.webhooks import Webhooks
+from .resources.events import Events
+from .markup import render as markup_render, extract_variables as markup_extract_variables
 
 
 @dataclass
@@ -72,6 +75,18 @@ class HttpClient:
         self._client.close()
 
 
+class Markup:
+    """Markup resource for rendering and variable extraction"""
+
+    def render(self, markup: str) -> str:
+        """Render Sevk markup to email-compatible HTML"""
+        return markup_render(markup)
+
+    def extract_variables(self, markup: str):
+        """Extract template variables from Sevk markup"""
+        return markup_extract_variables(markup)
+
+
 class Sevk:
     """
     Sevk API Client
@@ -97,6 +112,13 @@ class Sevk:
         self.segments = Segments(self._client)
         self.subscriptions = Subscriptions(self._client)
         self.emails = Emails(self._client)
+        self.webhooks = Webhooks(self._client)
+        self.events = Events(self._client)
+        self.markup = Markup()
+
+    def get_usage(self):
+        """Get project usage and limits"""
+        return self._client.get("/limits")
 
     def close(self):
         """Close the HTTP client"""
