@@ -1,118 +1,169 @@
-"""
-Broadcasts Resource
-"""
+from typing import Optional
 
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from ._base import Resource
+from .broadcast_types import (
+    AbTestConfigInput,
+    ActiveBroadcast,
+    ActiveBroadcastABTest,
+    ActiveBroadcastsResponse,
+    Broadcast,
+    BroadcastAbTest,
+    BroadcastABTestStatus,
+    BroadcastAnalytics,
+    BroadcastAudienceRef,
+    BroadcastBase,
+    BroadcastCostEstimate,
+    BroadcastDomainRef,
+    BroadcastEmail,
+    BroadcastEmailContact,
+    BroadcastLifecycleStatus,
+    BroadcastRecipientEstimate,
+    BroadcastRecipientEstimateParams,
+    BroadcastSegmentRef,
+    BroadcastStatusCompletion,
+    BroadcastStatusProgress,
+    BroadcastStatusResponse,
+    BroadcastStatusSchedule,
+    BroadcastStatusWarning,
+    BroadcastStyle,
+    BroadcastSummary,
+    BroadcastTargetType,
+    BroadcastTopicRef,
+    BroadcastUpdate,
+    BroadcastVariant,
+    BroadcastWarningType,
+    BroadcastWinnerMetric,
+    BroadcastWithVariants,
+    CancelBroadcastResponse,
+    CreateBroadcastParams,
+    ListBroadcastEmailsResponse,
+    ListBroadcastsParams,
+    ListBroadcastsResponse,
+    TestBroadcastOptions,
+    TestBroadcastParams,
+    TestBroadcastResponse,
+    UpdateBroadcastParams,
+    VariantInput,
+)
+from .types import DeletedResponse, PaginationParams
 
-if TYPE_CHECKING:
-    from ..client import HttpClient
+__all__ = [
+    "AbTestConfigInput",
+    "ActiveBroadcast",
+    "ActiveBroadcastABTest",
+    "ActiveBroadcastsResponse",
+    "Broadcast",
+    "BroadcastBase",
+    "BroadcastABTestStatus",
+    "BroadcastAbTest",
+    "BroadcastAnalytics",
+    "BroadcastAudienceRef",
+    "BroadcastCostEstimate",
+    "BroadcastDomainRef",
+    "BroadcastEmail",
+    "BroadcastEmailContact",
+    "BroadcastLifecycleStatus",
+    "BroadcastRecipientEstimate",
+    "BroadcastRecipientEstimateParams",
+    "BroadcastSummary",
+    "BroadcastUpdate",
+    "BroadcastWithVariants",
+    "BroadcastSegmentRef",
+    "BroadcastStatusCompletion",
+    "BroadcastStatusProgress",
+    "BroadcastStatusResponse",
+    "BroadcastStatusSchedule",
+    "BroadcastStatusWarning",
+    "BroadcastStyle",
+    "BroadcastTargetType",
+    "BroadcastTopicRef",
+    "BroadcastVariant",
+    "BroadcastWarningType",
+    "BroadcastWinnerMetric",
+    "Broadcasts",
+    "CancelBroadcastResponse",
+    "CreateBroadcastParams",
+    "ListBroadcastEmailsResponse",
+    "ListBroadcastsParams",
+    "ListBroadcastsResponse",
+    "TestBroadcastParams",
+    "TestBroadcastOptions",
+    "TestBroadcastResponse",
+    "UpdateBroadcastParams",
+    "VariantInput",
+]
 
 
-class Broadcasts:
-    """Broadcasts API resource"""
-
-    def __init__(self, client: "HttpClient"):
-        self._client = client
+class Broadcasts(Resource):
+    """Compose, schedule, send, and inspect broadcast campaigns."""
 
     def list(
-        self,
-        page: Optional[int] = None,
-        limit: Optional[int] = None,
-        search: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """List all broadcasts"""
-        params = {}
-        if page is not None:
-            params["page"] = page
-        if limit is not None:
-            params["limit"] = limit
-        if search is not None:
-            params["search"] = search
+        self, params: Optional[ListBroadcastsParams] = None
+    ) -> ListBroadcastsResponse:
+        """List broadcasts with optional pagination, search, and status filters."""
+        return self._client.get("/broadcasts", params)
 
-        return self._client.get("/broadcasts", params or None)
-
-    def get(self, broadcast_id: str) -> Dict[str, Any]:
-        """Get a broadcast by ID"""
+    def get(self, broadcast_id: str) -> Broadcast:
+        """Retrieve a broadcast by ID and include its delivery state."""
         return self._client.get(f"/broadcasts/{broadcast_id}")
 
-    def create(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new broadcast"""
-        return self._client.post("/broadcasts", params)
+    def create(self, data: CreateBroadcastParams) -> BroadcastWithVariants:
+        """Create a draft or scheduled broadcast for a target group."""
+        return self._client.post("/broadcasts", data)
 
-    def update(self, broadcast_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Update a broadcast"""
-        return self._client.put(f"/broadcasts/{broadcast_id}", params)
+    def update(self, broadcast_id: str, data: UpdateBroadcastParams) -> BroadcastUpdate:
+        """Update a broadcast while preserving omitted fields."""
+        return self._client.put(f"/broadcasts/{broadcast_id}", data)
 
-    def delete(self, broadcast_id: str) -> None:
-        """Delete a broadcast"""
-        self._client.delete(f"/broadcasts/{broadcast_id}")
+    def delete(self, broadcast_id: str) -> DeletedResponse:
+        """Delete a broadcast that has not been sent."""
+        return self._client.delete(f"/broadcasts/{broadcast_id}")
 
-    def send(self, broadcast_id: str) -> Dict[str, Any]:
-        """Send a broadcast"""
+    def send(self, broadcast_id: str) -> BroadcastSummary:
+        """Queue a prepared broadcast for delivery."""
         return self._client.post(f"/broadcasts/{broadcast_id}/send")
 
-    def cancel(self, broadcast_id: str) -> Dict[str, Any]:
-        """Cancel a broadcast"""
+    def cancel(self, broadcast_id: str) -> CancelBroadcastResponse:
+        """Cancel a broadcast when its state still allows cancellation."""
         return self._client.post(f"/broadcasts/{broadcast_id}/cancel")
 
-    def send_test(self, broadcast_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a test broadcast"""
-        return self._client.post(f"/broadcasts/{broadcast_id}/test", params)
-
-    def get_analytics(self, broadcast_id: str) -> Dict[str, Any]:
-        """Get analytics for a broadcast"""
-        return self._client.get(f"/broadcasts/{broadcast_id}/analytics")
-
-    def get_status(self, broadcast_id: str) -> Dict[str, Any]:
-        """Get status for a broadcast
-
-        Args:
-            broadcast_id: The broadcast ID
-
-        Returns:
-            Dict with broadcast status
-        """
-        return self._client.get(f"/broadcasts/{broadcast_id}/status")
-
-    def get_emails(
+    def test(
         self,
         broadcast_id: str,
-        page: Optional[int] = 1,
-        limit: Optional[int] = 20,
-    ) -> Dict[str, Any]:
-        """Get emails for a broadcast
+        data: TestBroadcastParams,
+        options: Optional[TestBroadcastOptions] = None,
+    ) -> TestBroadcastResponse:
+        """Send the broadcast to test recipients without starting the campaign."""
+        key = options.get("idempotency_key") if options else None
+        headers = {"Idempotency-Key": key} if key is not None else None
+        return self._client.post(f"/broadcasts/{broadcast_id}/test", data, headers)
 
-        Args:
-            broadcast_id: The broadcast ID
-            page: Page number (default 1)
-            limit: Number of results per page (default 20)
+    def analytics(self, broadcast_id: str) -> BroadcastAnalytics:
+        """Return aggregate delivery and engagement analytics."""
+        return self._client.get(f"/broadcasts/{broadcast_id}/analytics")
 
-        Returns:
-            Dict with broadcast emails
-        """
-        params = {}
-        if page is not None:
-            params["page"] = page
-        if limit is not None:
-            params["limit"] = limit
+    def status(self, broadcast_id: str) -> BroadcastStatusResponse:
+        """Return live scheduling and delivery progress."""
+        return self._client.get(f"/broadcasts/{broadcast_id}/status")
 
-        return self._client.get(f"/broadcasts/{broadcast_id}/emails", params or None)
+    def emails(
+        self,
+        broadcast_id: str,
+        params: Optional[PaginationParams] = None,
+    ) -> ListBroadcastEmailsResponse:
+        """List email deliveries created for a broadcast."""
+        return self._client.get(f"/broadcasts/{broadcast_id}/emails", params)
 
-    def estimate_cost(self, broadcast_id: str) -> Dict[str, Any]:
-        """Estimate cost for a broadcast
-
-        Args:
-            broadcast_id: The broadcast ID
-
-        Returns:
-            Dict with cost estimate
-        """
+    def estimate_cost(self, broadcast_id: str) -> BroadcastCostEstimate:
+        """Estimate delivery cost without sending the broadcast."""
         return self._client.get(f"/broadcasts/{broadcast_id}/estimate-cost")
 
-    def list_active(self) -> Dict[str, Any]:
-        """List active broadcasts
+    def estimate_recipients(
+        self, params: BroadcastRecipientEstimateParams
+    ) -> BroadcastRecipientEstimate:
+        """Resolve the subscribed recipient count for a target."""
+        return self._client.post("/broadcasts/estimate-recipients", params)
 
-        Returns:
-            Dict with active broadcasts
-        """
+    def active(self) -> ActiveBroadcastsResponse:
+        """List broadcasts that are scheduled or processing."""
         return self._client.get("/broadcasts/active")

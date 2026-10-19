@@ -1,113 +1,191 @@
-"""
-Contacts Resource
-"""
+from typing import List, Literal, Optional, TypedDict
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from dataclasses import dataclass
+from ._base import Resource
+from .activity import ActivityAction
+from .types import DeletedResponse, JSONObject, JSONValue, PaginationParams
 
-if TYPE_CHECKING:
-    from ..client import HttpClient
+UnsubscribeSource = Literal["USER", "API", "ADMIN", "BOUNCE", "COMPLAINT"]
 
 
-@dataclass
-class Contact:
+class _ContactRequired(TypedDict):
     id: str
     email: str
     subscribed: bool
-    data: Optional[Dict[str, Any]] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    project_id: Optional[str] = None
+    data: Optional[JSONObject]
+    createdAt: str
+    updatedAt: str
+    projectId: str
+    lastEventAt: Optional[str]
+    unsubscribedAt: Optional[str]
+    unsubscribedBy: Optional[UnsubscribeSource]
+    resubscriptionLocked: bool
+    bounceCount: int
+    lastBouncedAt: Optional[str]
 
 
-@dataclass
-class ListContactsResponse:
+class Contact(_ContactRequired):
+    pass
+
+
+class _ListContactsResponseRequired(TypedDict):
     items: List[Contact]
+
+
+class ListContactsResponse(_ListContactsResponseRequired, total=False):
     total: int
     page: int
-    total_pages: int
+    totalPages: int
+    hasMore: bool
+    nextCursor: Optional[str]
+    prevCursor: Optional[str]
 
 
-class Contacts:
+class _CreateContactParamsRequired(TypedDict):
+    email: str
+
+
+class CreateContactParams(_CreateContactParamsRequired, total=False):
+    subscribed: bool
+    data: JSONObject
+
+
+class UpdateContactParams(TypedDict, total=False):
+    email: str
+    subscribed: bool
+    data: Optional[JSONObject]
+
+
+class ListContactsParams(TypedDict, total=False):
+    page: int
+    limit: int
+    after: str
+    before: str
+    search: str
+    excludeAudience: str
+    subscribed: bool
+
+
+class _BulkContactUpdateRequired(TypedDict):
+    email: str
+
+
+class BulkContactUpdate(_BulkContactUpdateRequired, total=False):
+    subscribed: bool
+    data: Optional[JSONObject]
+
+
+class BulkUpdateContactsParams(TypedDict):
+    contacts: List[BulkContactUpdate]
+
+
+class BulkUpdateContactsResponse(TypedDict):
+    updated: int
+    notFound: int
+    errors: List[str]
+    updatedEmails: List[str]
+    notFoundEmails: List[str]
+
+
+class _BulkContactImportRequired(TypedDict):
+    email: str
+
+
+class BulkContactImport(_BulkContactImportRequired, total=False):
+    subscribed: bool
+    data: JSONObject
+
+
+class _BulkImportContactsParamsRequired(TypedDict):
+    contacts: List[BulkContactImport]
+
+
+class BulkImportContactsParams(_BulkImportContactsParamsRequired, total=False):
+    audienceId: str
+    topicId: str
+
+
+class ImportedContact(TypedDict):
+    id: str
+    email: str
+    subscribed: bool
+
+
+class BulkImportContactsResponse(TypedDict):
+    created: int
+    errors: List[str]
+    contacts: List[ImportedContact]
+
+
+class ContactActivityBroadcast(TypedDict):
+    id: str
+    name: Optional[str]
+
+
+class ContactActivityEmail(TypedDict):
+    id: str
+    subject: Optional[str]
+
+
+class ContactActivityItem(TypedDict):
+    id: str
+    action: ActivityAction
+    description: Optional[str]
+    createdAt: str
+    userAgent: Optional[str]
+    link: Optional[str]
+    metadata: Optional[JSONValue]
+    broadcast: Optional[ContactActivityBroadcast]
+    email: Optional[ContactActivityEmail]
+
+
+class _ContactActivityResponseRequired(TypedDict):
+    items: List[ContactActivityItem]
+
+
+class ContactActivityResponse(_ContactActivityResponseRequired, total=False):
+    total: int
+    page: int
+    totalPages: int
+    hasMore: bool
+    nextCursor: Optional[str]
+    prevCursor: Optional[str]
+
+
+class Contacts(Resource):
     """Contacts API resource"""
 
-    def __init__(self, client: "HttpClient"):
-        self._client = client
+    def list(self, params: Optional[ListContactsParams] = None) -> ListContactsResponse:
+        """List contacts with optional pagination, search, and filters."""
+        return self._client.get("/contacts", params)
 
-    def list(
-        self,
-        page: Optional[int] = None,
-        limit: Optional[int] = None,
-        search: Optional[str] = None,
-        exclude_audience: Optional[str] = None,
-        subscribed: Optional[bool] = None,
-    ) -> Dict[str, Any]:
-        """List all contacts"""
-        params = {}
-        if page is not None:
-            params["page"] = page
-        if limit is not None:
-            params["limit"] = limit
-        if search is not None:
-            params["search"] = search
-        if exclude_audience is not None:
-            params["excludeAudience"] = exclude_audience
-        if subscribed is not None:
-            params["subscribed"] = subscribed
-
-        return self._client.get("/contacts", params or None)
-
-    def create(
-        self,
-        email: str,
-        subscribed: Optional[bool] = None,
-        custom_fields: Optional[List[Dict[str, str]]] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """Create a new contact"""
-        data = {"email": email, **kwargs}
-        if subscribed is not None:
-            data["subscribed"] = subscribed
-        if custom_fields is not None:
-            data["customFields"] = custom_fields
-
+    def create(self, data: CreateContactParams) -> Contact:
+        """Create a contact and optionally attach custom metadata."""
         return self._client.post("/contacts", data)
 
-    def get(self, contact_id: str) -> Dict[str, Any]:
-        """Get a contact by ID"""
+    def get(self, contact_id: str) -> Contact:
+        """Retrieve a contact by ID."""
         return self._client.get(f"/contacts/{contact_id}")
 
-    def update(
-        self,
-        contact_id: str,
-        email: Optional[str] = None,
-        subscribed: Optional[bool] = None,
-        custom_fields: Optional[List[Dict[str, str]]] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """Update a contact"""
-        data = {**kwargs}
-        if email is not None:
-            data["email"] = email
-        if subscribed is not None:
-            data["subscribed"] = subscribed
-        if custom_fields is not None:
-            data["customFields"] = custom_fields
-
+    def update(self, contact_id: str, data: UpdateContactParams) -> Contact:
+        """Update a contact while preserving omitted fields."""
         return self._client.put(f"/contacts/{contact_id}", data)
 
-    def delete(self, contact_id: str) -> None:
-        """Delete a contact"""
-        self._client.delete(f"/contacts/{contact_id}")
+    def delete(self, contact_id: str) -> DeletedResponse:
+        """Delete a contact and remove its audience and topic memberships."""
+        return self._client.delete(f"/contacts/{contact_id}")
 
-    def bulk_update(self, updates: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Bulk update contacts"""
-        return self._client.put("/contacts/bulk-update", updates)
+    def bulk_update(self, data: BulkUpdateContactsParams) -> BulkUpdateContactsResponse:
+        """Update contacts by email and report entries that were not found."""
+        return self._client.put("/contacts/bulk-update", data)
 
-    def import_csv(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Import contacts from CSV"""
-        return self._client.post("/contacts/import", params)
+    def bulk_import(self, data: BulkImportContactsParams) -> BulkImportContactsResponse:
+        """Import contacts and optionally attach them to an audience or topic."""
+        return self._client.post("/contacts/import", data)
 
-    def get_events(self, contact_id: str) -> Dict[str, Any]:
-        """Get events for a contact"""
-        return self._client.get(f"/contacts/{contact_id}/events")
+    def activity(
+        self,
+        contact_id: str,
+        params: Optional[PaginationParams] = None,
+    ) -> ContactActivityResponse:
+        """List delivery and engagement activity for a contact."""
+        return self._client.get(f"/contacts/{contact_id}/activity", params)

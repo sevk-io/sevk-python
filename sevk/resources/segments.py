@@ -1,80 +1,152 @@
-"""
-Segments Resource
-"""
+from typing import List, Literal, Optional, TypedDict
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from ._base import Resource
+from .types import DeletedResponse, JSONObject, JSONValue, SearchPaginationParams
 
-if TYPE_CHECKING:
-    from ..client import HttpClient
+SegmentOperator = Literal["AND", "OR"]
+SegmentRuleOperator = Literal[
+    "equals",
+    "notEquals",
+    "contains",
+    "notContains",
+    "startsWith",
+    "endsWith",
+    "greaterThan",
+    "lessThan",
+    "greaterOrEqual",
+    "lessOrEqual",
+    "isEmpty",
+    "isNotEmpty",
+    "in",
+    "notIn",
+]
 
 
-class Segments:
+class _SegmentRuleRequired(TypedDict):
+    field: str
+    operator: SegmentRuleOperator
+    value: JSONValue
+
+
+class SegmentRule(_SegmentRuleRequired, total=False):
+    groupId: str
+    groupOperator: SegmentOperator
+
+
+class SegmentGroup(TypedDict):
+    id: str
+    operator: SegmentOperator
+
+
+class _CreateSegmentParamsRequired(TypedDict):
+    name: str
+    rules: List[SegmentRule]
+    operator: SegmentOperator
+
+
+class CreateSegmentParams(_CreateSegmentParamsRequired, total=False):
+    limitToTopics: List[str]
+    groups: List[SegmentGroup]
+
+
+class _PreviewSegmentParamsRequired(TypedDict):
+    rules: List[SegmentRule]
+    operator: SegmentOperator
+
+
+class PreviewSegmentParams(_PreviewSegmentParamsRequired, total=False):
+    limitToTopics: List[str]
+    groups: List[SegmentGroup]
+
+
+class UpdateSegmentParams(TypedDict, total=False):
+    name: str
+    rules: List[SegmentRule]
+    operator: SegmentOperator
+    limitToTopics: List[str]
+    groups: List[SegmentGroup]
+
+
+class Segment(TypedDict):
+    id: str
+    name: str
+    rules: List[SegmentRule]
+    operator: SegmentOperator
+    limitToTopics: List[str]
+    groups: Optional[List[SegmentGroup]]
+    audienceId: str
+    createdAt: str
+    updatedAt: str
+    lastRunAt: Optional[str]
+    lastRunCount: Optional[int]
+
+
+class _ListSegmentsResponseRequired(TypedDict):
+    items: List[Segment]
+
+
+class ListSegmentsResponse(_ListSegmentsResponseRequired, total=False):
+    total: int
+    page: int
+    totalPages: int
+    hasMore: bool
+    nextCursor: Optional[str]
+    prevCursor: Optional[str]
+
+
+class SegmentPreviewContact(TypedDict):
+    id: str
+    email: str
+    subscribed: bool
+    data: Optional[JSONObject]
+    createdAt: str
+
+
+class PreviewSegmentResponse(TypedDict):
+    count: int
+    contacts: List[SegmentPreviewContact]
+
+
+class CalculateSegmentResponse(TypedDict):
+    count: int
+    segmentId: str
+    segmentName: str
+    lastRunAt: str
+
+
+class Segments(Resource):
     """Segments API resource"""
 
-    def __init__(self, client: "HttpClient"):
-        self._client = client
-
-    def list(self, audience_id: str) -> Dict[str, Any]:
-        """List all segments for an audience"""
-        return self._client.get(f"/audiences/{audience_id}/segments")
-
-    def create(
+    def list(
         self,
         audience_id: str,
-        name: str,
-        rules: List[Dict[str, Any]],
-        operator: str = "AND",
-        limit_to_topics: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """Create a new segment
+        params: Optional[SearchPaginationParams] = None,
+    ) -> ListSegmentsResponse:
+        """List segments belonging to an audience with optional filtering."""
+        return self._client.get(f"/audiences/{audience_id}/segments", params)
 
-        Args:
-            audience_id: The audience ID
-            name: Segment name
-            rules: List of rule objects with field, operator, value
-            operator: Logical operator for combining rules ("AND" or "OR")
-            limit_to_topics: Optional list of topic IDs to limit the segment to
-        """
-        data: Dict[str, Any] = {"name": name, "rules": rules, "operator": operator}
-        if limit_to_topics is not None:
-            data["limitToTopics"] = limit_to_topics
-
+    def create(self, audience_id: str, data: CreateSegmentParams) -> Segment:
+        """Create a saved contact segment under an audience."""
         return self._client.post(f"/audiences/{audience_id}/segments", data)
 
-    def get(self, audience_id: str, segment_id: str) -> Dict[str, Any]:
-        """Get a segment by ID"""
-        return self._client.get(f"/audiences/{audience_id}/segments/{segment_id}")
-
-    def update(
-        self,
-        audience_id: str,
-        segment_id: str,
-        name: Optional[str] = None,
-        rules: Optional[List[Dict[str, Any]]] = None,
-        operator: Optional[str] = None,
-        limit_to_topics: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """Update a segment"""
-        data: Dict[str, Any] = {}
-        if name is not None:
-            data["name"] = name
-        if rules is not None:
-            data["rules"] = rules
-        if operator is not None:
-            data["operator"] = operator
-        if limit_to_topics is not None:
-            data["limitToTopics"] = limit_to_topics
-
-        return self._client.put(f"/audiences/{audience_id}/segments/{segment_id}", data)
-
-    def delete(self, audience_id: str, segment_id: str) -> Dict[str, Any]:
-        """Delete a segment"""
-        return self._client.delete(f"/audiences/{audience_id}/segments/{segment_id}")
-
-    def calculate(self, audience_id: str, segment_id: str) -> Dict[str, Any]:
-        """Calculate a segment's matching contacts"""
-        return self._client.get(f"/audiences/{audience_id}/segments/{segment_id}/calculate")
-
-    def preview(self, audience_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Preview how many contacts match given segment rules before saving"""
+    def preview(
+        self, audience_id: str, data: PreviewSegmentParams
+    ) -> PreviewSegmentResponse:
+        """Evaluate segment rules and return matches without saving them."""
         return self._client.post(f"/audiences/{audience_id}/segments/preview", data)
+
+    def get(self, segment_id: str) -> Segment:
+        """Retrieve a saved segment by ID."""
+        return self._client.get(f"/segments/{segment_id}")
+
+    def update(self, segment_id: str, data: UpdateSegmentParams) -> Segment:
+        """Update a segment while preserving omitted fields."""
+        return self._client.put(f"/segments/{segment_id}", data)
+
+    def delete(self, segment_id: str) -> DeletedResponse:
+        """Delete a segment without deleting any contacts."""
+        return self._client.delete(f"/segments/{segment_id}")
+
+    def calculate(self, segment_id: str) -> CalculateSegmentResponse:
+        """Recalculate and return the current matching contact count."""
+        return self._client.get(f"/segments/{segment_id}/calculate")

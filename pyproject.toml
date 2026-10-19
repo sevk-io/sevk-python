@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sevk"
-version = "1.0.0"
+version = "1.1.0"
 description = "Python SDK for Sevk API"
 readme = "README.md"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 requires-python = ">=3.8"
 authors = [
     {name = "Sevk", email = "dev@sevk.io"}
@@ -31,9 +31,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2,<2",
+    "mypy>=1.11,<1.15",
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "python-dotenv>=1.0.0",
+    "ruff>=0.8,<1",
+    "setuptools>=61.0",
+    "types-Pygments>=2.15",
+    "wheel>=0.45",
 ]
 
 [project.urls]
@@ -45,6 +49,24 @@ Repository = "https://github.com/sevk-io/sevk-python"
 where = ["."]
 include = ["sevk*"]
 
+[tool.setuptools.package-data]
+sevk = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.mypy]
+python_version = "3.8"
+files = ["sevk", "tests"]
+check_untyped_defs = true
+follow_imports = "skip"
+no_implicit_optional = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[tool.ruff]
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
