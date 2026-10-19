@@ -1,108 +1,41 @@
-"""
-Sevk API Client
-"""
+from types import TracebackType
+from typing import Optional, Type
 
-from dataclasses import dataclass
-from typing import Optional, Dict, Any
-import httpx
-
-from .resources.contacts import Contacts
+from .http_client import HttpClient
+from .options import SevkOptions
+from .resources.activity import Activity
 from .resources.audiences import Audiences
-from .resources.templates import Templates
 from .resources.broadcasts import Broadcasts
+from .resources.contacts import Contacts
 from .resources.domains import Domains
-from .resources.topics import Topics
+from .resources.emails import Emails
+from .resources.inbound import Inbound
+from .resources.markup import Markup
+from .resources.outbound import Outbound
 from .resources.segments import Segments
 from .resources.subscriptions import Subscriptions
-from .resources.emails import Emails
+from .resources.templates import Templates
+from .resources.topics import Topics
+from .resources.usage import Usage
 from .resources.webhooks import Webhooks
-from .resources.events import Events
-from .markup import render as markup_render, extract_variables as markup_extract_variables
-
-
-@dataclass
-class SevkOptions:
-    """Configuration options for Sevk client"""
-    base_url: str = "https://api.sevk.io"
-    timeout: int = 30
-
-
-class HttpClient:
-    """HTTP client wrapper for making API requests"""
-
-    def __init__(self, api_key: str, options: SevkOptions):
-        self.api_key = api_key
-        self.base_url = options.base_url
-        self.timeout = options.timeout
-        self._client = httpx.Client(timeout=self.timeout)
-
-    def _get_headers(self) -> Dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    def _handle_response(self, response: httpx.Response) -> Any:
-        if not response.is_success:
-            raise Exception(f"Request failed with status {response.status_code}: {response.text}")
-
-        if response.status_code == 204:
-            return {}
-
-        return response.json()
-
-    def get(self, path: str, params: Optional[Dict] = None) -> Any:
-        url = f"{self.base_url}{path}"
-        response = self._client.get(url, headers=self._get_headers(), params=params)
-        return self._handle_response(response)
-
-    def post(self, path: str, data: Optional[Dict] = None) -> Any:
-        url = f"{self.base_url}{path}"
-        response = self._client.post(url, headers=self._get_headers(), json=data)
-        return self._handle_response(response)
-
-    def put(self, path: str, data: Optional[Dict] = None) -> Any:
-        url = f"{self.base_url}{path}"
-        response = self._client.put(url, headers=self._get_headers(), json=data)
-        return self._handle_response(response)
-
-    def delete(self, path: str) -> Any:
-        url = f"{self.base_url}{path}"
-        response = self._client.delete(url, headers=self._get_headers())
-        return self._handle_response(response)
-
-    def close(self):
-        self._client.close()
-
-
-class Markup:
-    """Markup resource for rendering and variable extraction"""
-
-    def render(self, markup: str) -> str:
-        """Render Sevk markup to email-compatible HTML"""
-        return markup_render(markup)
-
-    def extract_variables(self, markup: str):
-        """Extract template variables from Sevk markup"""
-        return markup_extract_variables(markup)
 
 
 class Sevk:
     """
-    Sevk API Client
+    sevk API Client
 
     Usage:
         sevk = Sevk("sevk_your_api_key")
         contacts = sevk.contacts.list()
     """
 
-    def __init__(self, api_key: str, options: Optional[SevkOptions] = None):
+    def __init__(self, api_key: str, options: Optional[SevkOptions] = None) -> None:
+        """Create an API client and expose its resource clients as attributes."""
         if options is None:
             options = SevkOptions()
 
         self._client = HttpClient(api_key, options)
 
-        # Initialize resources
         self.contacts = Contacts(self._client)
         self.audiences = Audiences(self._client)
         self.templates = Templates(self._client)
@@ -113,19 +46,23 @@ class Sevk:
         self.subscriptions = Subscriptions(self._client)
         self.emails = Emails(self._client)
         self.webhooks = Webhooks(self._client)
-        self.events = Events(self._client)
+        self.activity = Activity(self._client)
+        self.inbound = Inbound(self._client)
+        self.outbound = Outbound(self._client)
+        self.usage = Usage(self._client)
         self.markup = Markup()
 
-    def get_usage(self):
-        """Get project usage and limits"""
-        return self._client.get("/limits")
-
-    def close(self):
-        """Close the HTTP client"""
+    def close(self) -> None:
+        """Release connections held by the API client."""
         self._client.close()
 
-    def __enter__(self):
+    def __enter__(self) -> "Sevk":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
         self.close()

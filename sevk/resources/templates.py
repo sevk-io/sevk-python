@@ -1,63 +1,74 @@
-"""
-Templates Resource
-"""
+from typing import List, Literal, Optional, TypedDict
 
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from ._base import Resource
+from .types import DeletedResponse, SearchPaginationParams
 
-if TYPE_CHECKING:
-    from ..client import HttpClient
+TemplateStyle = Literal["HTML", "MARKUP"]
 
 
-class Templates:
+class _CreateTemplateParamsRequired(TypedDict):
+    title: str
+    content: str
+
+
+class CreateTemplateParams(_CreateTemplateParamsRequired, total=False):
+    style: TemplateStyle
+
+
+class UpdateTemplateParams(TypedDict, total=False):
+    title: str
+    content: str
+    style: TemplateStyle
+
+
+class Template(TypedDict):
+    id: str
+    title: str
+    content: str
+    style: TemplateStyle
+    projectId: str
+    createdAt: str
+    updatedAt: str
+
+
+class _ListTemplatesResponseRequired(TypedDict):
+    items: List[Template]
+
+
+class ListTemplatesResponse(_ListTemplatesResponseRequired, total=False):
+    total: int
+    page: int
+    totalPages: int
+    hasMore: bool
+    nextCursor: Optional[str]
+    prevCursor: Optional[str]
+
+
+class Templates(Resource):
     """Templates API resource"""
 
-    def __init__(self, client: "HttpClient"):
-        self._client = client
-
     def list(
-        self,
-        page: Optional[int] = None,
-        limit: Optional[int] = None,
-        search: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """List all templates"""
-        params = {}
-        if page is not None:
-            params["page"] = page
-        if limit is not None:
-            params["limit"] = limit
-        if search is not None:
-            params["search"] = search
+        self, params: Optional[SearchPaginationParams] = None
+    ) -> ListTemplatesResponse:
+        """List reusable email templates with optional pagination and search."""
+        return self._client.get("/templates", params)
 
-        return self._client.get("/templates", params or None)
+    def create(self, data: CreateTemplateParams) -> Template:
+        """Create a reusable email template from content and optional styles."""
+        return self._client.post("/templates", data)
 
-    def create(self, title: str, content: str) -> Dict[str, Any]:
-        """Create a new template"""
-        return self._client.post("/templates", {"title": title, "content": content})
-
-    def get(self, template_id: str) -> Dict[str, Any]:
-        """Get a template by ID"""
+    def get(self, template_id: str) -> Template:
+        """Retrieve a template by ID."""
         return self._client.get(f"/templates/{template_id}")
 
-    def update(
-        self,
-        template_id: str,
-        title: Optional[str] = None,
-        content: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Update a template"""
-        data = {}
-        if title is not None:
-            data["title"] = title
-        if content is not None:
-            data["content"] = content
-
+    def update(self, template_id: str, data: UpdateTemplateParams) -> Template:
+        """Update a template while preserving omitted fields."""
         return self._client.put(f"/templates/{template_id}", data)
 
-    def delete(self, template_id: str) -> None:
-        """Delete a template"""
-        self._client.delete(f"/templates/{template_id}")
+    def delete(self, template_id: str) -> DeletedResponse:
+        """Delete a template without affecting email already sent from it."""
+        return self._client.delete(f"/templates/{template_id}")
 
-    def duplicate(self, template_id: str) -> Dict[str, Any]:
-        """Duplicate a template"""
+    def duplicate(self, template_id: str) -> Template:
+        """Create an independent copy of a template for further editing."""
         return self._client.post(f"/templates/{template_id}/duplicate", {})

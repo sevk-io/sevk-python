@@ -1,3 +1,0 @@
-"""
-Sevk Python SDK Tests
-"""

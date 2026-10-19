@@ -1,116 +1,133 @@
-"""
-Domains Resource
-"""
+from typing import List, Literal, Optional, TypedDict
 
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from ._base import Resource
+from .types import DeletedResponse, PaginationParams
 
-if TYPE_CHECKING:
-    from ..client import HttpClient
+DomainTLSPolicy = Literal["OPTIONAL", "REQUIRE"]
+DNSRecordType = Literal["CNAME", "TXT", "MX"]
 
 
-class Domains:
+class UpdateDomainParams(TypedDict, total=False):
+    inboundPrefix: str
+    email: str
+    senderName: str
+    clickTracking: bool
+    openTracking: bool
+    tlsPolicy: DomainTLSPolicy
+    inboundEnabled: bool
+
+
+class _CreateDomainParamsRequired(TypedDict):
+    domain: str
+    email: str
+
+
+class CreateDomainParams(_CreateDomainParamsRequired, total=False):
+    senderName: str
+    region: str
+
+
+class DNSRecord(TypedDict):
+    type: DNSRecordType
+    name: str
+    fqdn: str
+    value: str
+
+
+class DomainSummary(TypedDict):
+    id: str
+    domain: str
+    email: str
+    senderName: Optional[str]
+    region: str
+    verified: bool
+    clickTracking: bool
+    openTracking: bool
+    tlsPolicy: DomainTLSPolicy
+    inboundEnabled: bool
+    inboundVerified: bool
+    inboundPrefix: str
+    projectId: str
+    createdAt: str
+    updatedAt: str
+
+
+class DomainRead(DomainSummary, total=False):
+    verificationToken: str
+    dkimTokens: List[str]
+    dnsRecords: List[DNSRecord]
+
+
+class ListDomainsParams(PaginationParams, total=False):
+    verified: bool
+
+
+class _ListDomainsResponseRequired(TypedDict):
+    items: List[DomainSummary]
+
+
+class ListDomainsResponse(_ListDomainsResponseRequired, total=False):
+    total: int
+    page: int
+    totalPages: int
+    hasMore: bool
+    nextCursor: Optional[str]
+    prevCursor: Optional[str]
+
+
+class InboundMXRecord(TypedDict):
+    exchange: str
+    priority: int
+
+
+class InboundVerifyResult(DomainRead):
+    inboundMxResolved: List[InboundMXRecord]
+    inboundExpectedTarget: str
+
+
+class DNSRecordsResponse(TypedDict):
+    items: List[DNSRecord]
+
+
+class DomainRegionsResponse(TypedDict):
+    items: List[str]
+
+
+class Domains(Resource):
     """Domains API resource"""
 
-    def __init__(self, client: "HttpClient"):
-        self._client = client
+    def list(self, params: Optional[ListDomainsParams] = None) -> ListDomainsResponse:
+        """List sending domains with cursor or explicit page pagination."""
+        return self._client.get("/domains", params)
 
-    def list(self, verified: Optional[bool] = None) -> Dict[str, Any]:
-        """List all domains"""
-        params = {}
-        if verified is not None:
-            params["verified"] = verified
-
-        return self._client.get("/domains", params or None)
-
-    def get(self, domain_id: str) -> Dict[str, Any]:
-        """Get a domain by ID"""
+    def get(self, domain_id: str) -> DomainRead:
+        """Retrieve a domain and its current verification state."""
         return self._client.get(f"/domains/{domain_id}")
 
-    def create(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new domain
+    def create(self, data: CreateDomainParams) -> DomainRead:
+        """Register a domain; DNS material requires domain:dns-read."""
+        return self._client.post("/domains", data)
 
-        Args:
-            params: Dictionary containing domain parameters:
-                - name: Domain name (e.g., "example.com")
-
-        Returns:
-            Dict with created domain data
-        """
-        return self._client.post("/domains", params)
-
-    def update(
-        self,
-        domain_id: str,
-        email: Optional[str] = None,
-        from_: Optional[str] = None,
-        sender_name: Optional[str] = None,
-        click_tracking: Optional[bool] = None,
-        open_tracking: Optional[bool] = None,
-    ) -> Dict[str, Any]:
-        """Update a domain
-
-        Args:
-            domain_id: The domain ID to update
-            email: Email address
-            from_: From address
-            sender_name: Sender name
-            click_tracking: Enable click tracking
-            open_tracking: Enable open tracking
-
-        Returns:
-            Dict with updated domain data
-        """
-        data = {}
-        if email is not None:
-            data["email"] = email
-        if from_ is not None:
-            data["from"] = from_
-        if sender_name is not None:
-            data["senderName"] = sender_name
-        if click_tracking is not None:
-            data["clickTracking"] = click_tracking
-        if open_tracking is not None:
-            data["openTracking"] = open_tracking
-
+    def update(self, domain_id: str, data: UpdateDomainParams) -> DomainRead:
+        """Update domain sending, tracking, TLS, or inbound settings."""
         return self._client.put(f"/domains/{domain_id}", data)
 
-    def delete(self, domain_id: str) -> Dict[str, Any]:
-        """Delete a domain by ID
-
-        Args:
-            domain_id: The domain ID to delete
-
-        Returns:
-            Dict with deletion confirmation
-        """
+    def delete(self, domain_id: str) -> DeletedResponse:
+        """Delete a domain after the API confirms it is safe to remove."""
         return self._client.delete(f"/domains/{domain_id}")
 
-    def verify(self, domain_id: str) -> Dict[str, Any]:
-        """Verify a domain by ID
-
-        Args:
-            domain_id: The domain ID to verify
-
-        Returns:
-            Dict with verification status
-        """
+    def verify(self, domain_id: str) -> DomainRead:
+        """Recheck sending DNS records and return the updated domain state."""
         return self._client.post(f"/domains/{domain_id}/verify")
 
-    def get_dns_records(self, domain_id: str) -> Dict[str, Any]:
-        """Get DNS records for a domain
+    def verify_inbound(self, domain_id: str) -> InboundVerifyResult:
+        """Check the inbound MX record and return details useful for diagnosis."""
+        return self._client.post(f"/domains/{domain_id}/inbound/verify")
 
-        Args:
-            domain_id: The domain ID
-
-        Returns:
-            Dict with DNS records
-        """
+    def dns_records(self, domain_id: str) -> DNSRecordsResponse:
+        """Return the DNS records required for sending and inbound mail."""
         return self._client.get(f"/domains/{domain_id}/dns-records")
 
-    def get_regions(self) -> Dict[str, Any]:
-        """Get available domain regions
-
-        Returns:
-            Dict with available regions
-        """
+    def regions(self) -> DomainRegionsResponse:
+        """List region identifiers accepted when registering a domain."""
         return self._client.get("/domains/regions")
